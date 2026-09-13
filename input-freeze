@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly SUBMAP_NAME="input-freeze"
+readonly STATE_DIR="${XDG_STATE_HOME:-${HOME}/.local/state}/omarchy-input-freeze"
+readonly DEVICES_FILE="${STATE_DIR}/disabled-pointers"
+readonly LOCK_FILE="${STATE_DIR}/operation.lock"
+
+mkdir -p "$STATE_DIR"
+exec 9>"$LOCK_FILE"
+flock -w 5 9 || {
+  echo "Input Freeze is busy" >&2
+  exit 1
+}
+
+notify() {
+  [[ "${INPUT_FREEZE_NOTIFY:-1}" == "1" ]] || return 0
+  command -v omarchy-notification-send >/dev/null 2>&1 || return 0
+  omarchy-notification-send -u "${1}" "${2}"
+}
+
+require_session() {
+  command -v hyprctl >/dev/null 2>&1 || {
+    echo "hyprctl is required" >&2
+    exit 1
+  }
+  hyprctl -j submap >/dev/null 2>&1 || {
+    echo "No running Hyprland session was found" >&2
+    exit 1
+  }
+}
+
+active_submap() {
+  hyprctl -j submap | jq -r '.'
+}
+
+list_pointers() {
+  hyprctl devices -j | jq -r '
+    [
+      .mice[]?.name,
+      .touch[]?.name,
+      .tablets[]?.name
+    ]
+    | map(select(type == "string" and test("^[A-Za-z0-9._:-]+$")))
+    | unique[]
+  '
+}
+
+set_pointer() {
+  local pointer_name="$1"
+  local enabled="$2"
+  hyprctl eval "hl.device({ name = \"${pointer_name}\", enabled = ${enabled} })" >/dev/null
+}
+
+remember_pointer() {
+  local pointer_name="$1"
+  touch "$DEVICES_FILE"
+  grep -Fqx -- "$pointer_name" "$DEVICES_FILE" 2>/dev/null || printf '%s\n' "$pointer_name" >> "$DEVICES_FILE"
+}
+
+restore_recorded_pointers() {
+  local pointer_name
+  [[ -f "$DEVICES_FILE" ]] || return 0
+
+  while IFS= read -r pointer_name; do
+    [[ "$pointer_name" =~ ^[A-Za-z0-9._:-]+$ ]] || continue
+    set_pointer "$pointer_name" true || true
+  done < "$DEVICES_FILE"
+}
+
+clear_device_state() {
+  [[ -e "$DEVICES_FILE" ]] && unlink "$DEVICES_FILE"
+}
+
+enable_freeze() {
+  local pointer_name
+  local failed=0
+
+  if [[ "$(active_submap)" == "$SUBMAP_NAME" ]]; then
+    ensure_freeze
+    return 0
+  fi
+
+  clear_device_state
+  while IFS= read -r pointer_name; do
+    if set_pointer "$pointer_name" false; then
+      remember_pointer "$pointer_name"
+    else
+      failed=1
+      break
+    fi
+  done < <(list_pointers)
+
+  if (( failed )); then
+    restore_recorded_pointers
+    clear_device_state
+    echo "Could not disable every pointer; the operation was rolled back" >&2
+    exit 1
+  fi
+
+  if ! hyprctl dispatch "hl.dsp.submap(\"${SUBMAP_NAME}\")" >/dev/null; then
+    restore_recorded_pointers
+    clear_device_state
+    echo "Could not activate the Input Freeze keymap; the operation was rolled back" >&2
+    exit 1
+  fi
+
+  notify normal "Input Freeze enabled · press Super+Ctrl+F12 to restore input"
+}
+
+disable_freeze() {
+  hyprctl dispatch 'hl.dsp.submap("reset")' >/dev/null || true
+  restore_recorded_pointers
+  clear_device_state
+  notify low "Input Freeze disabled"
+}
+
+ensure_freeze() {
+  local pointer_name
+
+  if [[ "$(active_submap)" != "$SUBMAP_NAME" ]]; then
+    restore_recorded_pointers
+    clear_device_state
+    return 0
+  fi
+
+  while IFS= read -r pointer_name; do
+    set_pointer "$pointer_name" false
+    remember_pointer "$pointer_name"
+  done < <(list_pointers)
+}
+
+recover_input() {
+  local pointer_name
+
+  hyprctl dispatch 'hl.dsp.submap("reset")' >/dev/null || true
+  restore_recorded_pointers
+  while IFS= read -r pointer_name; do
+    set_pointer "$pointer_name" true || true
+  done < <(list_pointers)
+  clear_device_state
+  notify normal "Input devices recovered"
+}
+
+print_status() {
+  local submap
+  local active=false
+  local pointer_count=0
+
+  submap="$(active_submap)"
+  [[ "$submap" == "$SUBMAP_NAME" ]] && active=true
+  if [[ -f "$DEVICES_FILE" ]]; then
+    pointer_count="$(awk 'NF { count++ } END { print count + 0 }' "$DEVICES_FILE")"
+  fi
+
+  jq -nc \
+    --argjson active "$active" \
+    --arg submap "$submap" \
+    --argjson pointerCount "$pointer_count" \
+    '{ok: true, active: $active, submap: $submap, pointerCount: $pointerCount}'
+}
+
+require_session
+
+case "${1:-status}" in
+  enable) enable_freeze ;;
+  disable) disable_freeze ;;
+  toggle)
+    if [[ "$(active_submap)" == "$SUBMAP_NAME" ]]; then
+      disable_freeze
+    else
+      enable_freeze
+    fi
+    ;;
+  ensure) ensure_freeze ;;
+  recover) recover_input ;;
+  status) print_status ;;
+  *)
+    echo "Usage: input-freeze enable|disable|toggle|ensure|recover|status" >&2
+    exit 2
+    ;;
+esac

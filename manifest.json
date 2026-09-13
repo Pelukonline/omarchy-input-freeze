@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.pelukonline.input-freeze",
+  "name": "Input Freeze",
+  "version": "0.1.0",
+  "author": "pelukonline",
+  "license": "MIT",
+  "description": "Freeze keyboard and pointer input without locking your Omarchy session.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Input Freeze",
+    "description": "Protect a running session from accidental keyboard, mouse, touchpad, and touchscreen input.",
+    "category": "System",
+    "aliases": ["input-freeze", "toddler-mode", "child-lock", "keyboard-lock", "mouse-lock"],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "shortcutLabel": "Super + Ctrl + F12",
+      "refreshIntervalMs": 1000
+    },
+    "schema": [
+      {
+        "key": "shortcutLabel",
+        "type": "string",
+        "label": "Shortcut label",
+        "defaultValue": "Super + Ctrl + F12",
+        "description": "Label shown by the widget. Change the actual shortcut in hyprland.lua as well."
+      },
+      {
+        "key": "refreshIntervalMs",
+        "type": "integer",
+        "label": "Status refresh (milliseconds)",
+        "min": 500,
+        "max": 5000,
+        "step": 250,
+        "defaultValue": 1000
+      }
+    ]
+  }
+}
