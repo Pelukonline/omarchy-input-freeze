@@ -17,6 +17,7 @@ Panel {
   readonly property color urgent: bar ? bar.urgent : Color.accent
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property string shortcutLabel: String(setting("shortcutLabel", "Super + Ctrl + F12"))
+  readonly property string recoveryShortcutLabel: String(setting("recoveryShortcutLabel", "Super + Ctrl + Shift + F12"))
 
   function open() {
     if (freezeState) freezeState.refresh()
@@ -70,7 +71,8 @@ Panel {
 
         Text {
           width: parent.width
-          text: root.freezeState && root.freezeState.active ? "󰌾  Input frozen" : "󰌿  Input active"
+          text: !root.freezeState || !root.freezeState.available ? "Status unavailable"
+            : root.freezeState.active ? "󰌾  Input frozen" : "󰌿  Input active"
           color: root.freezeState && root.freezeState.active ? Color.accent : root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.title
@@ -91,6 +93,15 @@ Panel {
         Text {
           width: parent.width
           text: "Toggle shortcut  ·  " + root.shortcutLabel
+          color: root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+          wrapMode: Text.WordWrap
+        }
+
+        Text {
+          width: parent.width
+          text: "Emergency recovery  ·  " + root.recoveryShortcutLabel
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.bodySmall

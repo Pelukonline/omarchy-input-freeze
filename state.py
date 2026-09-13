@@ -74,7 +74,47 @@ def write_state(directory, names):
             pass
 
 
+def acquire_lock(fd):
+    deadline = time.monotonic() + 5
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Input Freeze is busy; retry recovery shortly")
+            time.sleep(0.05)
+
+
 def run(helper, arguments):
+    # All actions, including emergency recovery, share this directory lock.
+    # It is independent of persistent state, and never unlinked/replaced.
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    if not os.path.isabs(runtime):
+        raise ValueError("XDG_RUNTIME_DIR must be absolute")
+    parent = os.open(runtime, FLAGS | os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        validate(parent, directory=True)
+        try:
+            os.mkdir("omarchy-input-freeze", 0o700, dir_fd=parent)
+        except FileExistsError:
+            pass
+        coordinator = os.open("omarchy-input-freeze", FLAGS | os.O_RDONLY | os.O_DIRECTORY,
+                              dir_fd=parent)
+    finally:
+        os.close(parent)
+    try:
+        validate(coordinator, directory=True)
+        acquire_lock(coordinator)
+        if arguments == ["recover"]:
+            return subprocess.run(["bash", helper, "--state-session", "recover"],
+                                  pass_fds=(coordinator,), check=False).returncode
+        return run_with_state(helper, arguments, coordinator)
+    finally:
+        os.close(coordinator)
+
+
+def run_with_state(helper, arguments, coordinator):
     base = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
     if not os.path.isabs(base):
         raise ValueError("XDG_STATE_HOME must be absolute")
@@ -97,20 +137,13 @@ def run(helper, arguments):
         validate(directory, directory=True, migrate=True)
         lock = open_file(directory, LOCK, create=True)
         try:
-            deadline = time.monotonic() + 5
-            while True:
-                try:
-                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    break
-                except BlockingIOError:
-                    if time.monotonic() >= deadline:
-                        raise TimeoutError("Input Freeze is busy")
-                    time.sleep(0.05)
+            acquire_lock(lock)
             read_state(directory)
             env = dict(os.environ, INPUT_FREEZE_DIR_FD=str(directory),
                        INPUT_FREEZE_LOCK_FD=str(lock))
             return subprocess.run(["bash", helper, "--state-session", *arguments],
-                                  env=env, pass_fds=(directory, lock), check=False).returncode
+                                  env=env, pass_fds=(directory, lock, coordinator),
+                                  check=False).returncode
         finally:
             os.close(lock)
     finally:

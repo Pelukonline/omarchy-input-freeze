@@ -10,7 +10,9 @@ Item {
   property bool busy: actionProcess.running
   property int pointerCount: 0
   property string statusText: available ? (active ? "Input frozen" : "Input active") : "Unavailable"
-  property string lastError: ""
+  property string actionError: ""
+  property string statusError: ""
+  readonly property string lastError: actionError || statusError
 
   readonly property string helperPath: {
     var value = String(Qt.resolvedUrl("input-freeze"))
@@ -26,7 +28,7 @@ Item {
 
   function run(action) {
     if (busy || helperPath === "") return
-    root.lastError = ""
+    root.actionError = ""
     actionProcess.command = [helperPath, action]
     actionProcess.running = true
   }
@@ -71,7 +73,7 @@ Item {
     onExited: function(exitCode) {
       if (exitCode !== 0) {
         root.available = false
-        root.lastError = String(statusStderr.text || "Could not read Input Freeze status").trim()
+        root.statusError = String(statusStderr.text || "Could not read Input Freeze status").trim()
         return
       }
       try {
@@ -79,10 +81,10 @@ Item {
         root.available = result.ok === true
         root.active = result.active === true
         root.pointerCount = Number(result.pointerCount || 0)
-        root.lastError = ""
+        root.statusError = ""
       } catch (error) {
         root.available = false
-        root.lastError = "Input Freeze returned invalid status"
+        root.statusError = "Input Freeze returned invalid status"
       }
     }
   }
@@ -97,7 +99,7 @@ Item {
     }
     onExited: function(exitCode) {
       if (exitCode !== 0)
-        root.lastError = String(actionStderr.text || "Input Freeze action failed").trim()
+        root.actionError = String(actionStderr.text || "Input Freeze action failed").trim()
       root.refresh()
     }
   }
@@ -106,8 +108,12 @@ Item {
     id: ensureProcess
     running: false
     command: []
+    stderr: StdioCollector {
+      id: ensureStderr
+      waitForEnd: true
+    }
     onExited: function(exitCode) {
-      if (exitCode !== 0) root.lastError = "Input Freeze could not secure a newly connected pointer"
+      if (exitCode !== 0) root.actionError = String(ensureStderr.text || "Input Freeze could not secure a newly connected pointer").trim()
     }
   }
 }

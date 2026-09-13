@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.pelukonline.input-freeze",
   "name": "Input Freeze",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "author": "pelukonline",
   "license": "MIT",
   "description": "Freeze keyboard and pointer input without locking your Omarchy session.",
@@ -21,9 +21,17 @@
     "defaultSection": "right",
     "defaults": {
       "shortcutLabel": "Super + Ctrl + F12",
+      "recoveryShortcutLabel": "Super + Ctrl + Shift + F12",
       "refreshIntervalMs": 1000
     },
     "schema": [
+      {
+        "key": "recoveryShortcutLabel",
+        "type": "string",
+        "label": "Emergency recovery shortcut label",
+        "defaultValue": "Super + Ctrl + Shift + F12",
+        "description": "Label only. Change recovery_keys in hyprland.lua to change the binding."
+      },
       {
         "key": "shortcutLabel",
         "type": "string",

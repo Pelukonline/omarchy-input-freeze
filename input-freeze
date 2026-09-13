@@ -7,16 +7,21 @@ STATE_HELPER="$(dirname "$(realpath "${BASH_SOURCE[0]}")")/state.py"
 readonly STATE_HELPER
 if [[ "${1:-}" == "--state-session" ]]; then
   shift
-elif [[ "${1:-}" != "recover" ]]; then
+else
   exec python3 "$STATE_HELPER" run "${BASH_SOURCE[0]}" "$@"
 fi
 
 state() { python3 "$STATE_HELPER" "$@"; }
 
+# Bound IPC calls so a stalled compositor cannot hold recovery coordination forever.
+hypr() { timeout -k 1s 3s hyprctl "$@"; }
+
+fail() { echo "$*" >&2; return 1; }
+
 notify() {
   [[ "${INPUT_FREEZE_NOTIFY:-1}" == "1" ]] || return 0
   command -v omarchy-notification-send >/dev/null 2>&1 || return 0
-  omarchy-notification-send -u "${1}" "${2}"
+  omarchy-notification-send -u "${1}" "${2}" || true
 }
 
 require_session() {
@@ -24,24 +29,28 @@ require_session() {
     echo "hyprctl is required" >&2
     exit 1
   }
-  hyprctl -j submap >/dev/null 2>&1 || {
+  active_submap >/dev/null 2>&1 || {
     echo "No running Hyprland session was found" >&2
     exit 1
   }
 }
 
 active_submap() {
-  hyprctl -j submap | jq -r '.'
+  hypr -j submap | jq -er 'if type == "string" then . else error("Invalid submap") end'
 }
 
 list_pointers() {
-  hyprctl devices -j | jq -r '
+  hypr devices -j | jq -r '
+    if type != "object" or (.mice | type) != "array" then
+      error("Invalid device list")
+    else . end |
     [
       .mice[]?.name,
       .touch[]?.name,
       .tablets[]?.name
     ]
-    | map(select(type == "string" and test("^[A-Za-z0-9._:-]+$")))
+    | if all(.[]; type == "string" and test("^[A-Za-z0-9._:-]+$")) then .
+      else error("Unsupported device name") end
     | unique[]
   '
 }
@@ -49,7 +58,14 @@ list_pointers() {
 set_pointer() {
   local pointer_name="$1"
   local enabled="$2"
-  hyprctl eval "hl.device({ name = \"${pointer_name}\", enabled = ${enabled} })" >/dev/null
+  hypr eval "hl.device({ name = \"${pointer_name}\", enabled = ${enabled} })" >/dev/null
+}
+
+reset_submap() {
+  local current
+  hypr dispatch 'hl.dsp.submap("reset")' >/dev/null || return 1
+  current="$(active_submap)" || return 1
+  [[ "$current" == "default" || -z "$current" ]]
 }
 
 remember_pointer() {
@@ -59,12 +75,17 @@ remember_pointer() {
 
 restore_recorded_pointers() {
   local pointer_name recorded
+  local failed=0
   recorded="$(state read)" || return 1
 
   while IFS= read -r pointer_name; do
     [[ "$pointer_name" =~ ^[A-Za-z0-9._:-]+$ ]] || continue
-    set_pointer "$pointer_name" true || true
+    if ! set_pointer "$pointer_name" true; then
+      echo "Could not restore pointer: $pointer_name" >&2
+      failed=1
+    fi
   done <<< "$recorded"
+  return "$failed"
 }
 
 clear_device_state() {
@@ -72,72 +93,105 @@ clear_device_state() {
 }
 
 enable_freeze() {
-  local pointer_name
+  local pointer_name pointers current
   local failed=0
 
-  if [[ "$(active_submap)" == "$SUBMAP_NAME" ]]; then
+  current="$(active_submap)" || return 1
+  if [[ "$current" == "$SUBMAP_NAME" ]]; then
     ensure_freeze
-    return 0
+    return $?
   fi
 
-  clear_device_state
+  pointers="$(list_pointers)" || { fail "Could not list pointers; input was not frozen"; return 1; }
+  # Resolve any pending restoration before starting a fresh operation.
+  restore_recorded_pointers || { fail "Recovery incomplete; retry restoring input"; return 1; }
+  clear_device_state || return 1
   while IFS= read -r pointer_name; do
+    [[ -n "$pointer_name" ]] || continue
     if ! remember_pointer "$pointer_name" || ! set_pointer "$pointer_name" false; then
       failed=1
       break
     fi
-  done < <(list_pointers)
+  done <<< "$pointers"
 
   if (( failed )); then
-    restore_recorded_pointers || recover_input
-    clear_device_state
-    echo "Could not disable every pointer; the operation was rolled back" >&2
-    exit 1
+    rollback_freeze
+    return 1
   fi
 
-  if ! hyprctl dispatch "hl.dsp.submap(\"${SUBMAP_NAME}\")" >/dev/null; then
-    restore_recorded_pointers || recover_input
-    clear_device_state
-    echo "Could not activate the Input Freeze keymap; the operation was rolled back" >&2
-    exit 1
+  if ! hypr dispatch "hl.dsp.submap(\"${SUBMAP_NAME}\")" >/dev/null; then
+    rollback_freeze
+    return 1
+  fi
+  current="$(active_submap)" || current=""
+  if [[ "$current" != "$SUBMAP_NAME" ]]; then
+    rollback_freeze
+    return 1
   fi
 
   notify normal "Input Freeze enabled · press Super+Ctrl+F12 to restore input"
 }
 
+rollback_freeze() {
+  if disable_freeze; then
+    echo "Could not freeze input; changes were rolled back" >&2
+  else
+    echo "Recovery incomplete; use the emergency shortcut and retry" >&2
+  fi
+}
+
 disable_freeze() {
-  hyprctl dispatch 'hl.dsp.submap("reset")' >/dev/null || true
-  restore_recorded_pointers
-  clear_device_state
+  local failed=0
+  reset_submap || failed=1
+  restore_recorded_pointers || failed=1
+  if (( failed )); then
+    fail "Recovery incomplete; device records retained for retry"
+    return 1
+  fi
+  clear_device_state || { fail "Input restored, but could not clear device records"; return 1; }
   notify low "Input Freeze disabled"
 }
 
 ensure_freeze() {
-  local pointer_name
+  local pointer_name pointers current
 
-  if [[ "$(active_submap)" != "$SUBMAP_NAME" ]]; then
-    restore_recorded_pointers
+  current="$(active_submap)" || return 1
+  if [[ "$current" != "$SUBMAP_NAME" ]]; then
+    restore_recorded_pointers || return 1
     clear_device_state
-    return 0
+    return $?
   fi
 
+  pointers="$(list_pointers)" || { fail "Could not list pointers; no additional devices changed"; return 1; }
   while IFS= read -r pointer_name; do
+    [[ -n "$pointer_name" ]] || continue
     if ! remember_pointer "$pointer_name" || ! set_pointer "$pointer_name" false; then
-      recover_input
+      rollback_freeze
       return 1
     fi
-  done < <(list_pointers)
+  done <<< "$pointers"
 }
 
 recover_input() {
-  local pointer_name
+  local pointer_name pointers
+  local failed=0
 
-  hyprctl dispatch 'hl.dsp.submap("reset")' >/dev/null || true
+  # Always try to free the keyboard, even if pointer enumeration later fails.
+  reset_submap || failed=1
+  pointers="$(list_pointers)" || { fail "Recovery incomplete; could not list pointers"; return 1; }
   while IFS= read -r pointer_name; do
-    set_pointer "$pointer_name" true || true
-  done < <(list_pointers)
+    [[ -n "$pointer_name" ]] || continue
+    if ! set_pointer "$pointer_name" true; then
+      echo "Could not restore pointer: $pointer_name" >&2
+      failed=1
+    fi
+  done <<< "$pointers"
   # Emergency recovery deliberately never opens state files. A later successful
   # ensure/disable clears stale records under the normal lock.
+  if (( failed )); then
+    fail "Recovery incomplete; retry the emergency shortcut"
+    return 1
+  fi
   notify normal "Input devices recovered"
 }
 
@@ -146,9 +200,9 @@ print_status() {
   local active=false
   local pointer_count=0
 
-  submap="$(active_submap)"
+  submap="$(active_submap)" || return 1
   [[ "$submap" == "$SUBMAP_NAME" ]] && active=true
-  pointer_count="$(state read | awk 'NF { count++ } END { print count + 0 }')"
+  pointer_count="$(state read | awk 'NF { count++ } END { print count + 0 }')" || return 1
 
   jq -nc \
     --argjson active "$active" \
@@ -159,11 +213,14 @@ print_status() {
 
 require_session
 
+run_action() {
 case "${1:-status}" in
   enable) enable_freeze ;;
   disable) disable_freeze ;;
   toggle)
-    if [[ "$(active_submap)" == "$SUBMAP_NAME" ]]; then
+    local current
+    current="$(active_submap)" || return 1
+    if [[ "$current" == "$SUBMAP_NAME" ]]; then
       disable_freeze
     else
       enable_freeze
@@ -174,6 +231,17 @@ case "${1:-status}" in
   status) print_status ;;
   *)
     echo "Usage: input-freeze enable|disable|toggle|ensure|recover|status" >&2
-    exit 2
+    return 2
     ;;
 esac
+}
+
+if run_action "$@"; then
+  exit 0
+else
+  result=$?
+  if [[ "${1:-status}" != "status" && "${1:-}" != "ensure" ]]; then
+    notify critical "Input Freeze action failed · emergency recovery: Super+Ctrl+Shift+F12"
+  fi
+  exit "$result"
+fi
