@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.pelukonline.input-freeze",
   "name": "Input Freeze",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": "pelukonline",
   "license": "MIT",
   "description": "Freeze keyboard and pointer input without locking your Omarchy session.",

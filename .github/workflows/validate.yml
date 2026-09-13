@@ -25,5 +25,5 @@ jobs:
       - name: Validate shell helper
         run: |
           bash -n input-freeze
-          shellcheck input-freeze
+          shellcheck input-freeze tests/test-helper.sh
           bash tests/test-helper.sh

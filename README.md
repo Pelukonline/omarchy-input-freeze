@@ -22,7 +22,7 @@ required.
 
 - Omarchy with the Quattro shell plugin runtime
 - Hyprland 0.55 or newer with Lua configuration
-- `bash`, `jq`, `flock`, and `hyprctl` (included with a standard Omarchy install)
+- `bash`, `python3` (standard library only), `jq`, and `hyprctl`
 
 ## Install
 
@@ -92,6 +92,11 @@ From another TTY, target the running Hyprland instance if required, then run the
 same recovery command in the graphical user's environment. A Hyprland reload or
 new login also clears transient per-device overrides.
 
+Emergency `recover` bypasses state storage and re-enables currently connected
+pointers even if state files are unsafe or unreadable. Stop issuing freeze
+commands before using it; it intentionally bypasses the normal operation lock.
+Stale records are cleared by the next successful `ensure` or `disable` operation.
+
 ## Remove
 
 Restore input before removal:
@@ -123,6 +128,15 @@ bash -n "$PLUGIN_DIR/input-freeze"
 The plugin runs with the current user's permissions. It never requests root,
 reads key contents, sends telemetry, or uses the network. Its state file stores
 only the Hyprland names of pointer devices temporarily disabled by the plugin.
+
+State storage is handled by `state.py`, while desktop operations remain in Bash.
+The Python parent holds a non-truncating file lock for the complete Bash action.
+State files are accessed relative to a validated directory descriptor using
+`O_NOFOLLOW`; non-regular files and multiple hard links are rejected. Owned legacy
+directories/files are tightened to 0700/0600 after descriptor validation. Device
+records use exclusive temporary files and atomic replacement. This prevents the
+reported symlink overwrite; it is not isolation from arbitrary code running as
+the same user.
 
 ## License
 

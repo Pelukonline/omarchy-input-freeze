@@ -3,16 +3,15 @@
 set -euo pipefail
 
 readonly SUBMAP_NAME="input-freeze"
-readonly STATE_DIR="${XDG_STATE_HOME:-${HOME}/.local/state}/omarchy-input-freeze"
-readonly DEVICES_FILE="${STATE_DIR}/disabled-pointers"
-readonly LOCK_FILE="${STATE_DIR}/operation.lock"
+STATE_HELPER="$(dirname "$(realpath "${BASH_SOURCE[0]}")")/state.py"
+readonly STATE_HELPER
+if [[ "${1:-}" == "--state-session" ]]; then
+  shift
+elif [[ "${1:-}" != "recover" ]]; then
+  exec python3 "$STATE_HELPER" run "${BASH_SOURCE[0]}" "$@"
+fi
 
-mkdir -p "$STATE_DIR"
-exec 9>"$LOCK_FILE"
-flock -w 5 9 || {
-  echo "Input Freeze is busy" >&2
-  exit 1
-}
+state() { python3 "$STATE_HELPER" "$@"; }
 
 notify() {
   [[ "${INPUT_FREEZE_NOTIFY:-1}" == "1" ]] || return 0
@@ -55,23 +54,21 @@ set_pointer() {
 
 remember_pointer() {
   local pointer_name="$1"
-  touch "$DEVICES_FILE"
-  grep -Fqx -- "$pointer_name" "$DEVICES_FILE" 2>/dev/null || printf '%s\n' "$pointer_name" >> "$DEVICES_FILE"
+  state add "$pointer_name"
 }
 
 restore_recorded_pointers() {
-  local pointer_name
-  [[ -f "$DEVICES_FILE" ]] || return 0
+  local pointer_name recorded
+  recorded="$(state read)" || return 1
 
   while IFS= read -r pointer_name; do
     [[ "$pointer_name" =~ ^[A-Za-z0-9._:-]+$ ]] || continue
     set_pointer "$pointer_name" true || true
-  done < "$DEVICES_FILE"
+  done <<< "$recorded"
 }
 
 clear_device_state() {
-  [[ -e "$DEVICES_FILE" ]] && unlink "$DEVICES_FILE"
-  return 0
+  state clear
 }
 
 enable_freeze() {
@@ -85,23 +82,21 @@ enable_freeze() {
 
   clear_device_state
   while IFS= read -r pointer_name; do
-    if set_pointer "$pointer_name" false; then
-      remember_pointer "$pointer_name"
-    else
+    if ! remember_pointer "$pointer_name" || ! set_pointer "$pointer_name" false; then
       failed=1
       break
     fi
   done < <(list_pointers)
 
   if (( failed )); then
-    restore_recorded_pointers
+    restore_recorded_pointers || recover_input
     clear_device_state
     echo "Could not disable every pointer; the operation was rolled back" >&2
     exit 1
   fi
 
   if ! hyprctl dispatch "hl.dsp.submap(\"${SUBMAP_NAME}\")" >/dev/null; then
-    restore_recorded_pointers
+    restore_recorded_pointers || recover_input
     clear_device_state
     echo "Could not activate the Input Freeze keymap; the operation was rolled back" >&2
     exit 1
@@ -127,8 +122,10 @@ ensure_freeze() {
   fi
 
   while IFS= read -r pointer_name; do
-    set_pointer "$pointer_name" false
-    remember_pointer "$pointer_name"
+    if ! remember_pointer "$pointer_name" || ! set_pointer "$pointer_name" false; then
+      recover_input
+      return 1
+    fi
   done < <(list_pointers)
 }
 
@@ -136,11 +133,11 @@ recover_input() {
   local pointer_name
 
   hyprctl dispatch 'hl.dsp.submap("reset")' >/dev/null || true
-  restore_recorded_pointers
   while IFS= read -r pointer_name; do
     set_pointer "$pointer_name" true || true
   done < <(list_pointers)
-  clear_device_state
+  # Emergency recovery deliberately never opens state files. A later successful
+  # ensure/disable clears stale records under the normal lock.
   notify normal "Input devices recovered"
 }
 
@@ -151,9 +148,7 @@ print_status() {
 
   submap="$(active_submap)"
   [[ "$submap" == "$SUBMAP_NAME" ]] && active=true
-  if [[ -f "$DEVICES_FILE" ]]; then
-    pointer_count="$(awk 'NF { count++ } END { print count + 0 }' "$DEVICES_FILE")"
-  fi
+  pointer_count="$(state read | awk 'NF { count++ } END { print count + 0 }')"
 
   jq -nc \
     --argjson active "$active" \

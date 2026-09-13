@@ -1,2 +1,3 @@
 .qmllint.ini
 *.log
+__pycache__/
