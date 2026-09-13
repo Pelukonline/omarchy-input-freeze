@@ -71,6 +71,7 @@ restore_recorded_pointers() {
 
 clear_device_state() {
   [[ -e "$DEVICES_FILE" ]] && unlink "$DEVICES_FILE"
+  return 0
 }
 
 enable_freeze() {

@@ -14,6 +14,7 @@ Panel {
   readonly property var barIdentity: hostWidget || root
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color dim: Qt.darker(foreground, 1.55)
+  readonly property color urgent: bar ? bar.urgent : Color.accent
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property string shortcutLabel: String(setting("shortcutLabel", "Super + Ctrl + F12"))
 
@@ -111,7 +112,7 @@ Panel {
           visible: root.freezeState && root.freezeState.lastError !== ""
           width: parent.width
           text: root.freezeState ? root.freezeState.lastError : ""
-          color: Color.error
+          color: root.urgent
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
           wrapMode: Text.WordWrap
