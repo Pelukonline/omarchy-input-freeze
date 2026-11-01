@@ -4,7 +4,7 @@
 
 ![Input Freeze: freeze your inputs while your desktop keeps running. Plugin showcase and toggle shortcut.](preview.png)
 
-*Showcase artwork depicts the v0.1.2 panel. v0.1.3 uses shorter panel text.*
+*Showcase artwork reflects the simplified v0.1.3 panel.*
 
 Input Freeze temporarily blocks keyboard and pointer input without locking your
 Omarchy session. Media playback, downloads, renders, dashboards, and other
