@@ -82,8 +82,8 @@ Panel {
         Text {
           width: parent.width
           text: root.freezeState && root.freezeState.active
-            ? "Keyboard events are being consumed and pointer devices are disconnected from the cursor."
-            : "Keep media, downloads, renders, and visible apps running while accidental input is blocked."
+            ? "Input paused. Use the shortcut to resume."
+            : "Freeze keyboard and pointer input."
           color: root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.body
@@ -92,7 +92,7 @@ Panel {
 
         Text {
           width: parent.width
-          text: "Toggle shortcut  ·  " + root.shortcutLabel
+          text: "Toggle  ·  " + root.shortcutLabel
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.bodySmall
@@ -129,14 +129,6 @@ Panel {
           wrapMode: Text.WordWrap
         }
 
-        Text {
-          width: parent.width
-          text: "This prevents accidents; it is not a security lock. Right-click the bar icon to recover input if state becomes inconsistent."
-          color: root.dim
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          wrapMode: Text.WordWrap
-        }
       }
     }
   }

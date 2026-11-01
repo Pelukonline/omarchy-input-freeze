@@ -2,13 +2,23 @@
 
 [![Built for Omarchy](https://raw.githubusercontent.com/tcballard/omarchy-badges/85f859029e236e784e7b05ada6dbe73506d07a91/badges/v1/built-for-omarchy.svg)](https://github.com/tcballard/omarchy-badges)
 
-![Input Freeze: freeze your inputs while your desktop keeps running. Actual plugin panel, features, and toggle shortcut.](preview.png)
+![Input Freeze: freeze your inputs while your desktop keeps running. Plugin showcase and toggle shortcut.](preview.png)
+
+*Showcase artwork depicts the v0.1.2 panel. v0.1.3 uses shorter panel text.*
 
 Input Freeze temporarily blocks keyboard and pointer input without locking your
 Omarchy session. Media playback, downloads, renders, dashboards, and other
 visible work continue normally while accidental input is ignored.
 
 ## Features
+
+### v0.1.3
+
+- Shorter panel descriptions and toggle label.
+- Removed the panel footer; safety and recovery guidance remain in this README.
+- No changes to input handling, shortcuts, permissions, or recovery behavior.
+
+### Capabilities
 
 - Consumes all unmatched keyboard input through a dedicated Hyprland submap.
 - Temporarily disconnects mice, touchpads, touchscreens, and tablet pointers.
